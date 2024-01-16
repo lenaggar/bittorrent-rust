@@ -5,23 +5,39 @@ use std::env;
 // use serde_bencode
 
 #[allow(dead_code)]
-fn decode_bencoded_value(encoded_value: &str) -> serde_json::Value {
+fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
     if encoded_value.starts_with(|c: char| c.is_digit(10)) {
-        // If encoded_value starts with a digit, it's a number
-        let colon_index = encoded_value.find(':').unwrap();
-        let number_string = &encoded_value[..colon_index];
-        let number = number_string.parse::<i64>().unwrap();
-        let string = &encoded_value[colon_index + 1..colon_index + 1 + number as usize];
-        return serde_json::Value::String(string.to_string());
-    } else if encoded_value.starts_with("i") {
-        let number = encoded_value
-            .chars()
-            .skip(1)
-            .take_while(|c| *c != 'e')
-            .collect::<String>()
-            .parse::<serde_json::Number>()
+        return encoded_value
+            .split_once(':')
+            .and_then(|(text_len, remaining)| {
+                let number = text_len.parse::<usize>().ok()?;
+                Some((
+                    serde_json::Value::String(remaining[..number].to_string()),
+                    &remaining[number..],
+                ))
+            })
             .unwrap();
-        return serde_json::Value::Number(number);
+    } else if encoded_value.starts_with('i') {
+        return encoded_value
+            .split_once('e')
+            .and_then(|(stringified_number, remaining)| {
+                Some((
+                    stringified_number[1..].parse::<isize>().ok()?.into(),
+                    remaining,
+                ))
+            })
+            .unwrap();
+    } else if encoded_value.starts_with('l') {
+        let mut list = Vec::new();
+        let mut remaining = &encoded_value[1..];
+
+        while !remaining.is_empty() && !remaining.starts_with('e') {
+            let (decoded_value, rest) = decode_bencoded_value(remaining);
+            list.push(decoded_value);
+            remaining = rest;
+        }
+
+        (list.into(), &remaining[1..])
     } else {
         panic!("Unhandled encoded value: {}", encoded_value)
     }
@@ -35,7 +51,7 @@ fn main() {
     if command == "decode" {
         let encoded_value = &args[2];
         let decoded_value = decode_bencoded_value(encoded_value);
-        println!("{}", decoded_value.to_string());
+        println!("{}", decoded_value.0.to_string());
     } else {
         println!("unknown command: {}", args[1])
     }
