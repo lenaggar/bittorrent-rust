@@ -6,14 +6,22 @@ use std::env;
 
 #[allow(dead_code)]
 fn decode_bencoded_value(encoded_value: &str) -> serde_json::Value {
-    // If encoded_value starts with a digit, it's a number
-    if encoded_value.chars().next().unwrap().is_digit(10) {
-        // Example: "5:hello" -> "hello"
+    if encoded_value.starts_with(|c: char| c.is_digit(10)) {
+        // If encoded_value starts with a digit, it's a number
         let colon_index = encoded_value.find(':').unwrap();
         let number_string = &encoded_value[..colon_index];
         let number = number_string.parse::<i64>().unwrap();
         let string = &encoded_value[colon_index + 1..colon_index + 1 + number as usize];
         return serde_json::Value::String(string.to_string());
+    } else if encoded_value.starts_with("i") {
+        let number = encoded_value
+            .chars()
+            .skip(1)
+            .take_while(|c| *c != 'e')
+            .collect::<String>()
+            .parse::<serde_json::Number>()
+            .unwrap();
+        return serde_json::Value::Number(number);
     } else {
         panic!("Unhandled encoded value: {}", encoded_value)
     }
