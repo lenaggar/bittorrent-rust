@@ -7,26 +7,24 @@ use std::env;
 #[allow(dead_code)]
 fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
     if encoded_value.starts_with(|c: char| c.is_digit(10)) {
-        return encoded_value
-            .split_once(':')
-            .and_then(|(text_len, remaining)| {
-                let number = text_len.parse::<usize>().ok()?;
-                Some((
+        return match encoded_value.split_once(':') {
+            None => panic!("Could not split string, no ':' found"),
+            Some((text_len, remaining)) => {
+                let number = text_len.parse::<usize>().unwrap();
+                (
                     serde_json::Value::String(remaining[..number].to_string()),
                     &remaining[number..],
-                ))
-            })
-            .unwrap();
+                )
+            }
+        };
     } else if encoded_value.starts_with('i') {
-        return encoded_value
-            .split_once('e')
-            .and_then(|(stringified_number, remaining)| {
-                Some((
-                    stringified_number[1..].parse::<isize>().ok()?.into(),
-                    remaining,
-                ))
-            })
-            .unwrap();
+        return match encoded_value.split_once('e') {
+            None => panic!("Could not split string, no 'e' found"),
+            Some((number, remaining)) => (
+                serde_json::Value::Number(number[1..].parse::<isize>().unwrap().into()),
+                remaining,
+            ),
+        };
     } else if encoded_value.starts_with('l') {
         let mut list = Vec::new();
         let mut remaining = &encoded_value[1..];
@@ -38,6 +36,23 @@ fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
         }
 
         (list.into(), &remaining[1..])
+    } else if encoded_value.starts_with('d') {
+        let mut map = serde_json::Map::new();
+
+        let mut remaining = &encoded_value[1..];
+
+        while !remaining.is_empty() && !remaining.starts_with('e') {
+            let (key, rest_with_value) = decode_bencoded_value(remaining); // key
+            let k = match key {
+                serde_json::Value::String(s) => s,
+                _ => panic!("Key is not a string"),
+            };
+            let (value, rest) = decode_bencoded_value(rest_with_value); // value
+            map.insert(k, value);
+            remaining = rest;
+        }
+
+        (serde_json::Value::Object(map), &remaining[1..])
     } else {
         panic!("Unhandled encoded value: {}", encoded_value)
     }
