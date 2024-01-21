@@ -120,6 +120,16 @@ fn main() {
             println!("Info Hash: {}", hex::encode(&info_hash));
 
             println!("Piece Length: {}", torrent.info.piece_length);
+
+            println!("Piece Hash:");
+            torrent
+                .info
+                .pieces
+                .chunks(20)
+                .map(hex::encode)
+                .for_each(|piece| {
+                    println!("{}", piece);
+                });
         }
         None => {}
     }
