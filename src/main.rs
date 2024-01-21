@@ -1,73 +1,116 @@
+use std::path::PathBuf;
+
+use clap::{Parser, Subcommand};
+use serde::{Deserialize, Serialize};
+use serde_bencode;
 use serde_json;
-use std::env;
 
-// Available if you need it!
-// use serde_bencode
-
-#[allow(dead_code)]
 fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
-    if encoded_value.starts_with(|c: char| c.is_digit(10)) {
-        return match encoded_value.split_once(':') {
-            None => panic!("Could not split string, no ':' found"),
-            Some((text_len, remaining)) => {
-                let number = text_len.parse::<usize>().unwrap();
-                (
-                    serde_json::Value::String(remaining[..number].to_string()),
-                    &remaining[number..],
+    match encoded_value.chars().next() {
+        Some('0'..='9') => encoded_value
+            .split_once(':')
+            .and_then(|(len, remaining)| {
+                Some(
+                    len.parse::<usize>()
+                        .and_then(|len| {
+                            let (text, rest) = remaining.split_at(len);
+                            Ok((serde_json::Value::String(text.to_string()), rest))
+                        })
+                        .expect("String case: Could not parse string length"),
                 )
+            })
+            .expect("String case: Couldn't find delimiter ':'"),
+        Some('i') => encoded_value
+            .split_once('e')
+            .and_then(|(unparsed_int, rest)| {
+                Some((
+                    serde_json::Value::Number(
+                        unparsed_int[1..]
+                            .parse::<isize>()
+                            .expect("Int case: Could not parse int")
+                            .into(),
+                    ),
+                    rest,
+                ))
+            })
+            .expect("Int case: Couldn't find end 'e'"),
+        Some('l') => {
+            let mut list = Vec::new();
+            let mut rest = &encoded_value[1..];
+
+            while !rest.is_empty() && !rest.starts_with('e') {
+                let (decoded_value, remaining) = decode_bencoded_value(rest);
+                list.push(decoded_value);
+                rest = remaining;
             }
-        };
-    } else if encoded_value.starts_with('i') {
-        return match encoded_value.split_once('e') {
-            None => panic!("Could not split string, no 'e' found"),
-            Some((number, remaining)) => (
-                serde_json::Value::Number(number[1..].parse::<isize>().unwrap().into()),
-                remaining,
-            ),
-        };
-    } else if encoded_value.starts_with('l') {
-        let mut list = Vec::new();
-        let mut remaining = &encoded_value[1..];
 
-        while !remaining.is_empty() && !remaining.starts_with('e') {
-            let (decoded_value, rest) = decode_bencoded_value(remaining);
-            list.push(decoded_value);
-            remaining = rest;
+            (list.into(), &rest[1..])
         }
+        Some('d') => {
+            let mut map = serde_json::Map::new();
+            let mut rest = &encoded_value[1..];
 
-        (list.into(), &remaining[1..])
-    } else if encoded_value.starts_with('d') {
-        let mut map = serde_json::Map::new();
+            while !rest.is_empty() && !rest.starts_with('e') {
+                let (key, rest_with_value) = decode_bencoded_value(rest); // key
+                let k = match key {
+                    serde_json::Value::String(s) => s,
+                    _ => panic!("Key is not a string"),
+                };
+                let (value, remaining) = decode_bencoded_value(rest_with_value); // value
+                map.insert(k, value);
+                rest = remaining;
+            }
 
-        let mut remaining = &encoded_value[1..];
-
-        while !remaining.is_empty() && !remaining.starts_with('e') {
-            let (key, rest_with_value) = decode_bencoded_value(remaining); // key
-            let k = match key {
-                serde_json::Value::String(s) => s,
-                _ => panic!("Key is not a string"),
-            };
-            let (value, rest) = decode_bencoded_value(rest_with_value); // value
-            map.insert(k, value);
-            remaining = rest;
+            (serde_json::Value::Object(map), &rest[1..])
         }
-
-        (serde_json::Value::Object(map), &remaining[1..])
-    } else {
-        panic!("Unhandled encoded value: {}", encoded_value)
+        _ => panic!("Unhandled encoded value: {}", encoded_value),
     }
 }
 
-// Usage: your_bittorrent.sh decode "<encoded_value>"
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    let command = &args[1];
+#[derive(Serialize, Deserialize)]
+struct Torrent {
+    announce: String,
+    info: TorrentInfo,
+}
 
-    if command == "decode" {
-        let encoded_value = &args[2];
-        let decoded_value = decode_bencoded_value(encoded_value);
-        println!("{}", decoded_value.0.to_string());
-    } else {
-        println!("unknown command: {}", args[1])
+#[derive(Serialize, Deserialize)]
+struct TorrentInfo {
+    length: usize,
+    name: String,
+    #[serde(rename = "piece length")]
+    piece_length: usize,
+    #[serde(with = "serde_bytes")]
+    pieces: Vec<u8>,
+}
+
+#[derive(Parser)]
+#[command(author, version)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Decodes a given bencoded string
+    Decode { bencode: String },
+    /// Provides info about a given torrent file
+    Info { file: String },
+}
+
+fn main() {
+    match &Cli::parse().command {
+        Some(Commands::Decode { bencode }) => {
+            let decoded_value = decode_bencoded_value(bencode);
+            println!("{}", decoded_value.0.to_string());
+        }
+        Some(Commands::Info { file }) => {
+            let file_content = std::fs::read::<PathBuf>(file.into()).expect("Could not read file");
+            let torrent = serde_bencode::from_bytes::<Torrent>(&file_content)
+                .expect("Could not parse torrent file");
+            println!("Tracker URL: {}", torrent.announce);
+            println!("Length: {}", torrent.info.length);
+        }
+        None => {}
     }
 }
