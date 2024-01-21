@@ -118,6 +118,8 @@ fn main() {
             let info_hash = hasher.finalize();
 
             println!("Info Hash: {}", hex::encode(&info_hash));
+
+            println!("Piece Length: {}", torrent.info.piece_length);
         }
         None => {}
     }
