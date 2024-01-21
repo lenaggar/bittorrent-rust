@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use serde_bencode;
 use serde_json;
+use sha1::{Digest, Sha1};
 
 fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
     match encoded_value.chars().next() {
@@ -110,6 +111,13 @@ fn main() {
                 .expect("Could not parse torrent file");
             println!("Tracker URL: {}", torrent.announce);
             println!("Length: {}", torrent.info.length);
+
+            let encoded_info = serde_bencode::to_bytes(&torrent.info).expect("Could not encode");
+            let mut hasher = Sha1::new();
+            hasher.update(&encoded_info);
+            let info_hash = hasher.finalize();
+
+            println!("Info Hash: {}", hex::encode(&info_hash));
         }
         None => {}
     }
